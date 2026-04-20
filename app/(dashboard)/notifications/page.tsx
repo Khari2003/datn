@@ -1,28 +1,141 @@
 "use client";
 import { motion } from "motion/react";
-import { 
-  BellRing, 
-  Send, 
-  Mail, 
-  MessageSquare,
-  Smartphone,
-  History,
-  CheckCircle2,
-  Clock,
-  Plus
+import {
+  BellRing, Send, Mail, MessageSquare, Smartphone,
+  History, CheckCircle2, Clock, Plus, Loader2,
+  RefreshCw, AlertCircle, Users,
 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { notifications, type NotificationResponse } from "@/lib/api";
 
-const HISTORY_MOCK = [
-  { id: 1, title: "Thông báo đóng phí dịch vụ T7/2026", type: "email", status: "Sent", time: "10:30 - Hôm nay", audience: "Tất cả cư dân" },
-  { id: 2, title: "Bảo trì thang máy Tòa A", type: "push", status: "Sent", time: "14:15 - Hôm qua", audience: "Cư dân Tòa A" },
-  { id: 3, title: "Cảnh báo an ninh khu vực hầm B1", type: "sms", status: "Failed", time: "09:00 - 12/03", audience: "Bảo vệ & BQL" },
-  { id: 4, title: "Mời họp Hội nghị nhà chung cư", type: "email", status: "Scheduled", time: "08:00 - Ngày mai", audience: "Chủ hộ" },
+const CHANNELS = [
+  { key: "push",  label: "Push App",   icon: Smartphone, color: "rose" },
+  { key: "email", label: "Email",       icon: Mail,       color: "blue" },
+  { key: "sms",   label: "SMS (Có phí)", icon: MessageSquare, color: "emerald" },
 ];
 
+const AUDIENCES = [
+  { value: "all",        label: "Tất cả cư dân" },
+  { value: "building_a", label: "Cư dân Tòa A" },
+  { value: "building_b", label: "Cư dân Tòa B" },
+  { value: "villa",      label: "Villa" },
+  { value: "owners",     label: "Chủ hộ" },
+  { value: "staff",      label: "Ban Quản Lý" },
+];
+
+function statusStyle(s: string) {
+  switch (s) {
+    case "sent":      return "text-emerald-500";
+    case "scheduled": return "text-amber-500";
+    case "failed":    return "text-rose-500";
+    default:          return "text-zinc-400";
+  }
+}
+
+function statusLabel(s: string) {
+  const m: Record<string, string> = { sent: "Đã gửi", scheduled: "Đã lên lịch", failed: "Thất bại", draft: "Nháp", sending: "Đang gửi" };
+  return m[s] ?? s;
+}
+
+function channelBadge(ch: string) {
+  const m: Record<string, string> = {
+    push:  "bg-rose-500/20 text-rose-400",
+    email: "bg-blue-500/20 text-blue-400",
+    sms:   "bg-emerald-500/20 text-emerald-400",
+  };
+  return m[ch] ?? "bg-zinc-500/20 text-zinc-400";
+}
+
 export default function NotificationsPage() {
+  const [history, setHistory] = useState<NotificationResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [sendingId, setSendingId] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  // Form state
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [audience, setAudience] = useState("all");
+  const [selectedChannels, setSelectedChannels] = useState<string[]>(["push"]);
+
+  const fetchHistory = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await notifications.getAll();
+      if (res.errorCode === 200 && res.data) {
+        setHistory(res.data);
+      } else {
+        setError(res.errorMessage || "Không tải được lịch sử");
+      }
+    } catch { setError("Lỗi kết nối server"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  function toggleChannel(key: string) {
+    setSelectedChannels((prev) =>
+      prev.includes(key) ? prev.filter((c) => c !== key) : [...prev, key]
+    );
+  }
+
+  async function handleSend() {
+    if (!title.trim() || !content.trim()) {
+      setError("Vui lòng điền tiêu đề và nội dung");
+      return;
+    }
+    if (selectedChannels.length === 0) {
+      setError("Vui lòng chọn ít nhất một kênh gửi");
+      return;
+    }
+    setSending(true);
+    setError("");
+    setSuccess("");
+    try {
+      // Tạo 1 notification per channel (hoặc tạo 1 với channel đầu tiên - BE hiện chỉ nhận 1 channel)
+      const channel = selectedChannels[0];
+      const res = await notifications.create({
+        title: title.trim(),
+        content: content.trim(),
+        channel,
+        audience,
+        createdByAuthUserId: 1, // TODO: lấy từ AuthContext
+      });
+      if (res.errorCode === 200) {
+        setSuccess("Tạo thông báo thành công! Đang gửi...");
+        setTitle("");
+        setContent("");
+        setSelectedChannels(["push"]);
+        await fetchHistory();
+      } else {
+        setError(res.errorMessage || "Tạo thông báo thất bại");
+      }
+    } catch { setError("Lỗi kết nối server"); }
+    finally { setSending(false); }
+  }
+
+  async function handleResend(id: number) {
+    setSendingId(id);
+    try {
+      const res = await notifications.send(id);
+      if (res.errorCode === 200) {
+        setSuccess("Đã gửi thành công!");
+        setTimeout(() => setSuccess(""), 3000);
+        await fetchHistory();
+      } else {
+        alert(res.errorMessage || "Gửi thất bại");
+      }
+    } catch { alert("Lỗi kết nối"); }
+    finally { setSendingId(null); }
+  }
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-10">
-      <motion.div 
+      {/* Header */}
+      <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[#111] border border-white/5 rounded-2xl p-6"
@@ -32,170 +145,200 @@ export default function NotificationsPage() {
             <BellRing className="w-6 h-6 text-rose-400" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">Trung Tâm <span className="text-rose-400">Thông Báo</span></h1>
-            <p className="text-sm text-zinc-400">Gửi và quản lý chiến dịch thông báo đa kênh (Push, Email, SMS)</p>
+            <h1 className="text-2xl font-bold text-white tracking-tight">
+              Trung Tâm <span className="text-rose-400">Thông Báo</span>
+            </h1>
+            <p className="text-sm text-zinc-400">Gửi và quản lý chiến dịch thông báo đa kênh</p>
           </div>
         </div>
-        <button className="px-5 py-2.5 bg-rose-500 hover:bg-rose-400 text-white font-semibold rounded-lg shadow-[0_0_15px_rgba(244,63,94,0.3)] transition-all flex items-center gap-2 text-sm">
-          <Plus className="w-4 h-4" />
-          Tạo Chiến Dịch Mới
+        <button
+          onClick={fetchHistory}
+          disabled={loading}
+          className="p-2.5 bg-white/5 border border-white/10 rounded-lg text-zinc-400 hover:text-white transition-all disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
         </button>
       </motion.div>
 
+      {/* Alerts */}
+      {error && (
+        <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3 text-sm text-emerald-400">
+          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+          {success}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Compose Area */}
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
+        {/* Compose */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2 }}
-          className="lg:col-span-2 space-y-6"
+          transition={{ delay: 0.15 }}
+          className="lg:col-span-2 bg-[#111] border border-white/5 rounded-2xl p-6 relative overflow-hidden"
         >
-          <div className="bg-[#111] border border-white/5 rounded-2xl p-6 relative overflow-hidden">
-            {/* Glow decoration */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-rose-500/5 blur-3xl rounded-full pointer-events-none" />
+          <div className="absolute top-0 right-0 w-64 h-64 bg-rose-500/5 blur-3xl rounded-full pointer-events-none" />
+          <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2 relative z-10">
+            <Send className="w-5 h-5 text-rose-400" />
+            Soạn Thông Báo
+          </h2>
 
-            <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
-              <Send className="w-5 h-5 text-rose-400" />
-              Soạn Thông Báo Nhanh
-            </h2>
-
-            <form className="space-y-5 relative z-10">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Tiêu đề thông báo</label>
-                  <input 
-                    type="text" 
-                    placeholder="VD: Thông báo bảo trì..."
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/50 transition-all"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Đối tượng nhận</label>
-                  <select className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/50 transition-all appearance-none">
-                    <option value="all">Tất cả cư dân</option>
-                    <option value="toa_a">Cư dân Tòa A</option>
-                    <option value="toa_b">Cư dân Tòa B</option>
-                    <option value="bql">Ban Quản Lý</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Kênh gửi</label>
-                <div className="flex flex-wrap gap-4">
-                  <label className="flex items-center gap-3 p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 cursor-pointer transition-all">
-                    <Smartphone className="w-5 h-5 text-rose-400" />
-                    <span className="text-sm font-medium text-white">Push App</span>
-                    <input type="checkbox" defaultChecked className="hidden" />
-                    <CheckCircle2 className="w-4 h-4 text-rose-500 ml-2" />
-                  </label>
-                  <label className="flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 cursor-pointer transition-all">
-                    <Mail className="w-5 h-5 text-zinc-400" />
-                    <span className="text-sm font-medium text-zinc-300">Email</span>
-                    <input type="checkbox" className="hidden" />
-                  </label>
-                  <label className="flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 cursor-pointer transition-all">
-                    <MessageSquare className="w-5 h-5 text-zinc-400" />
-                    <span className="text-sm font-medium text-zinc-300">SMS (Có phí)</span>
-                    <input type="checkbox" className="hidden" />
-                  </label>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Nội dung</label>
-                <textarea 
-                  rows={4}
-                  placeholder="Nhập nội dung thông báo..."
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/50 transition-all resize-none"
+          <div className="space-y-5 relative z-10">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Tiêu đề *</label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="VD: Thông báo bảo trì..."
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/30 transition-all"
                 />
               </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/5">
-                <button type="button" className="px-5 py-2.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-white hover:bg-white/5 transition-colors">
-                  Lưu Nháp
-                </button>
-                <button type="button" className="px-5 py-2.5 bg-rose-500 hover:bg-rose-400 text-white font-bold rounded-lg shadow-[0_0_15px_rgba(244,63,94,0.3)] transition-all flex items-center gap-2 text-sm">
-                  <Send className="w-4 h-4" />
-                  Gửi Ngay
-                </button>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Đối tượng nhận</label>
+                <select
+                  value={audience}
+                  onChange={(e) => setAudience(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rose-500/50 transition-all appearance-none"
+                >
+                  {AUDIENCES.map((a) => (
+                    <option key={a.value} value={a.value} className="bg-[#111]">{a.label}</option>
+                  ))}
+                </select>
               </div>
-            </form>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Kênh gửi</label>
+              <div className="flex flex-wrap gap-3">
+                {CHANNELS.map((ch) => {
+                  const selected = selectedChannels.includes(ch.key);
+                  return (
+                    <button
+                      key={ch.key}
+                      type="button"
+                      onClick={() => toggleChannel(ch.key)}
+                      className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border transition-all text-sm font-medium ${
+                        selected
+                          ? "border-rose-500/40 bg-rose-500/10 text-white"
+                          : "border-white/10 bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10"
+                      }`}
+                    >
+                      <ch.icon className={`w-4 h-4 ${selected ? "text-rose-400" : "text-zinc-500"}`} />
+                      {ch.label}
+                      {selected && <CheckCircle2 className="w-3.5 h-3.5 text-rose-400 ml-1" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Nội dung *</label>
+              <textarea
+                rows={4}
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="Nhập nội dung thông báo..."
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/30 transition-all resize-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-white/5">
+              <button
+                type="button"
+                className="px-5 py-2.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                onClick={() => { setTitle(""); setContent(""); }}
+              >
+                Xoá Nháp
+              </button>
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={sending}
+                className="px-5 py-2.5 bg-rose-500 hover:bg-rose-400 disabled:opacity-50 text-white font-bold rounded-lg shadow-[0_0_15px_rgba(244,63,94,0.3)] transition-all flex items-center gap-2 text-sm"
+              >
+                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                {sending ? "Đang gửi..." : "Gửi Ngay"}
+              </button>
+            </div>
           </div>
         </motion.div>
 
-        {/* History Panel */}
-        <motion.div 
+        {/* History */}
+        <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.25 }}
           className="lg:col-span-1 bg-[#111] border border-white/5 rounded-2xl p-6 flex flex-col"
         >
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <History className="w-5 h-5 text-zinc-400" />
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <History className="w-4 h-4 text-zinc-400" />
               Lịch sử gửi
             </h2>
-            <button className="text-xs text-rose-400 hover:text-rose-300 transition-colors font-medium">Xem tất cả</button>
+            <span className="text-xs text-zinc-500">{history.length} mục</span>
           </div>
 
-          <div className="space-y-4 flex-1 overflow-y-auto pr-2 custom-scrollbar">
-            {HISTORY_MOCK.map((item) => (
-              <div key={item.id} className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.05] transition-colors group cursor-pointer">
-                <div className="flex justify-between items-start mb-2">
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                    item.type === 'email' ? 'bg-blue-500/20 text-blue-400' :
-                    item.type === 'push' ? 'bg-rose-500/20 text-rose-400' : 'bg-emerald-500/20 text-emerald-400'
-                  }`}>
-                    {item.type}
-                  </span>
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-500 font-mono">
-                    <Clock className="w-3 h-3" />
-                    {item.time}
+          {loading ? (
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
+            </div>
+          ) : history.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-zinc-600">
+              <BellRing className="w-10 h-10 mb-2 opacity-30" />
+              <p className="text-sm">Chưa có thông báo nào</p>
+            </div>
+          ) : (
+            <div className="space-y-3 flex-1 overflow-y-auto pr-1 custom-scrollbar">
+              {history.map((item) => (
+                <div key={item.id} className="p-3.5 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors group">
+                  <div className="flex items-start justify-between mb-2">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${channelBadge(item.channel)}`}>
+                      {item.channel}
+                    </span>
+                    <div className="flex items-center gap-1 text-xs text-zinc-500 font-mono">
+                      <Clock className="w-3 h-3" />
+                      {new Date(item.createdAt).toLocaleDateString("vi-VN")}
+                    </div>
+                  </div>
+
+                  <h3 className="text-sm font-medium text-white mb-1.5 line-clamp-2 group-hover:text-rose-300 transition-colors">
+                    {item.title}
+                  </h3>
+
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
+                    <span className="text-xs text-zinc-500 flex items-center gap-1">
+                      <Users className="w-3 h-3" />
+                      {item.audience}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-semibold ${statusStyle(item.status)}`}>
+                        {statusLabel(item.status)}
+                      </span>
+                      {item.status === "draft" && (
+                        <button
+                          onClick={() => handleResend(item.id)}
+                          disabled={sendingId === item.id}
+                          className="text-xs text-rose-400 hover:text-rose-300 transition-colors disabled:opacity-50"
+                        >
+                          {sendingId === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <h3 className="text-sm font-medium text-white mb-2 line-clamp-2 group-hover:text-rose-300 transition-colors">
-                  {item.title}
-                </h3>
-                <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
-                  <span className="text-xs text-zinc-500 flex items-center gap-1.5">
-                    <UsersIcon className="w-3.5 h-3.5" />
-                    {item.audience}
-                  </span>
-                  <span className={`text-xs font-semibold ${
-                    item.status === 'Sent' ? 'text-emerald-500' : 
-                    item.status === 'Scheduled' ? 'text-amber-500' : 'text-rose-500'
-                  }`}>
-                    {item.status}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </motion.div>
       </div>
     </div>
-  );
-}
-
-function UsersIcon(props: any) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
   );
 }
