@@ -3,13 +3,15 @@
 import { motion, AnimatePresence } from "motion/react";
 import { ShieldAlert, ArrowRight, Eye, EyeOff, Loader2, KeyRound } from "lucide-react";
 import { useState, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { auth } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 type Step = "credentials" | "mfa";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login, completeMfa } = useAuth();
   const [step, setStep] = useState<Step>("credentials");
   const [mfaTicket, setMfaTicket] = useState("");
   const [userName, setUserName] = useState("");
@@ -20,7 +22,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const mfaRef = useRef<HTMLInputElement>(null);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: { preventDefault(): void }) {
     e.preventDefault();
     if (!userName.trim() || !password.trim()) {
       setError("Vui lòng nhập đầy đủ thông tin");
@@ -29,14 +31,13 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await auth.staffLogin(userName.trim(), password);
-      if (res.errorCode !== 200) {
-        setError(res.errorMessage || "Sai tài khoản hoặc mật khẩu");
+      const result = await login(userName.trim(), password);
+      if (result.error) {
+        setError(result.error);
         return;
       }
-      const d = res.data;
-      if (d?.requiresMfa && d.mfaTicket) {
-        setMfaTicket(d.mfaTicket);
+      if (result.requiresMfa && result.mfaTicket) {
+        setMfaTicket(result.mfaTicket);
         setStep("mfa");
         setTimeout(() => mfaRef.current?.focus(), 300);
         return;
@@ -49,7 +50,7 @@ export default function LoginPage() {
     }
   }
 
-  async function handleMfa(e: React.FormEvent) {
+  async function handleMfa(e: { preventDefault(): void }) {
     e.preventDefault();
     if (mfaCode.length !== 6) {
       setError("Mã MFA phải có 6 chữ số");
@@ -58,9 +59,9 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await auth.verifyMfa(mfaTicket, mfaCode);
-      if (res.errorCode !== 200) {
-        setError("Mã MFA không đúng hoặc đã hết hạn");
+      const result = await completeMfa(mfaTicket, mfaCode);
+      if (result.error) {
+        setError(result.error);
         setMfaCode("");
         return;
       }
@@ -123,8 +124,8 @@ export default function LoginPage() {
                 className="space-y-5"
               >
                 <div>
-                  <p className="text-lg font-semibold text-white mb-1">Đăng nhập quản trị</p>
-                  <p className="text-xs text-zinc-500">Chỉ dành cho tài khoản staff & admin</p>
+                  <p className="text-lg font-semibold text-white mb-1">Đăng nhập</p>
+                  <p className="text-xs text-zinc-500">Nhập tên đăng nhập và mật khẩu để tiếp tục</p>
                 </div>
 
                 <div className="space-y-2">
@@ -192,6 +193,13 @@ export default function LoginPage() {
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                   {loading ? "Đang đăng nhập..." : "Đăng Nhập"}
                 </button>
+
+                <p className="text-center text-sm text-zinc-500">
+                  Chưa có tài khoản?{" "}
+                  <Link href="/register" className="text-amber-500 hover:text-amber-400 font-semibold transition-colors">
+                    Đăng ký
+                  </Link>
+                </p>
               </motion.form>
             ) : (
               <motion.form

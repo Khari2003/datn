@@ -1,6 +1,6 @@
 "use client";
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { auth, users, type GetUserResponse } from "@/lib/api";
+import { auth, account, setToken, getToken, clearToken, type GetUserResponse } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
 interface AuthState {
@@ -9,13 +9,24 @@ interface AuthState {
   roles: { roleID: number; roleName: string }[];
   loading: boolean;
   sessionId: number | null;
+  token: string | null;
 }
 
 interface AuthContextValue extends AuthState {
   login: (userName: string, password: string) => Promise<{ requiresMfa?: boolean; mfaTicket?: string; error?: string }>;
+  completeMfa: (mfaTicket: string, code: string) => Promise<{ error?: string }>;
   logout: () => Promise<void>;
   hasPermission: (code: string) => boolean;
   refreshUser: () => Promise<void>;
+  register: (data: {
+    userName: string;
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    gender?: string;
+  }) => Promise<{ success: boolean; userID?: number; error?: string }>;
+  verifyRegisterEmail: (userID: number, token: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -28,15 +39,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     roles: [],
     loading: true,
     sessionId: null,
+    token: null,
   });
 
   const refreshUser = useCallback(async () => {
     try {
-      const res = await users.me();
+      const token = getToken();
+      if (!token) {
+        setState((s) => ({ ...s, user: null, loading: false }));
+        return;
+      }
+
+      const res = await account.getMe();
       if (res.errorCode === 200 && res.data) {
         setState((s) => ({ ...s, user: res.data, loading: false }));
       } else {
         setState((s) => ({ ...s, user: null, loading: false }));
+        clearToken();
       }
     } catch {
       setState((s) => ({ ...s, user: null, loading: false }));
@@ -44,45 +63,132 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Thử lấy permissions từ cookie fz.permissions (nếu FE set)
-    try {
-      const raw = document.cookie
-        .split(";")
-        .find((c) => c.trim().startsWith("fz.permissions="));
-      if (raw) {
-        const val = decodeURIComponent(raw.split("=")[1]);
-        const parsed = JSON.parse(val);
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setState((s) => ({ ...s, permissions: parsed }));
+    const token = getToken();
+    if (token) {
+      setState((s) => ({ ...s, token }));
+      refreshUser();
+    } else {
+      setState((s) => ({ ...s, loading: false }));
+    }
+  }, [refreshUser]);
+
+  const login = useCallback(
+    async (userName: string, password: string) => {
+      try {
+        const res = await auth.staffLogin(userName, password);
+
+        if (res.errorCode !== 200 || !res.data) {
+          return { error: res.errorMessage || "Sai tài khoản hoặc mật khẩu" };
+        }
+
+        const d = res.data;
+
+        if (d.requiresMfa) {
+          return { requiresMfa: true, mfaTicket: d.mfaTicket };
+        }
+
+        setToken(d.token);
+        setState((s) => ({
+          ...s,
+          token: d.token,
+          permissions: d.permissions ?? [],
+          roles: d.roles ?? [],
+          sessionId: d.sessionId,
+        }));
+
+        await refreshUser();
+        return {};
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Lỗi kết nối" };
       }
-    } catch { /* ignore */ }
+    },
+    [refreshUser]
+  );
 
-    refreshUser();
-  }, [refreshUser]);
+  const completeMfa = useCallback(
+    async (mfaTicket: string, code: string) => {
+      try {
+        const res = await auth.verifyMfa(mfaTicket, code);
 
-  const login = useCallback(async (userName: string, password: string) => {
-    const res = await auth.staffLogin(userName, password);
-    if (res.errorCode !== 200 || !res.data) {
-      return { error: res.errorMessage || "Sai tài khoản hoặc mật khẩu" };
-    }
-    const d = res.data;
-    if (d.requiresMfa) {
-      return { requiresMfa: true, mfaTicket: d.mfaTicket };
-    }
-    setState((s) => ({
-      ...s,
-      permissions: d.permissions ?? [],
-      roles: d.roles ?? [],
-      sessionId: d.sessionId,
-    }));
-    await refreshUser();
-    return {};
-  }, [refreshUser]);
+        if (res.errorCode !== 200 || !res.data) {
+          return { error: res.errorMessage || "Mã MFA không đúng hoặc đã hết hạn" };
+        }
+
+        const d = res.data;
+        setToken(d.token);
+        setState((s) => ({
+          ...s,
+          token: d.token,
+          permissions: d.permissions ?? [],
+          roles: d.roles ?? [],
+          sessionId: d.sessionId,
+        }));
+
+        await refreshUser();
+        return {};
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Lỗi kết nối" };
+      }
+    },
+    [refreshUser]
+  );
+
+  const register = useCallback(
+    async (data: {
+      userName: string;
+      email: string;
+      password: string;
+      firstName: string;
+      lastName: string;
+      gender?: string;
+    }) => {
+      try {
+        const res = await auth.register(data);
+
+        if (res.errorCode !== 200) {
+          return { success: false, error: res.errorMessage || "Đăng ký thất bại" };
+        }
+
+        return { success: true, userID: res.data?.userID };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : "Lỗi kết nối" };
+      }
+    },
+    []
+  );
+
+  const verifyRegisterEmail = useCallback(
+    async (userID: number, token: string) => {
+      try {
+        const res = await auth.verifyRegisterEmail(userID, token);
+        if (res.errorCode !== 200) {
+          return { success: false, error: res.errorMessage || "Xác thực thất bại" };
+        }
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : "Lỗi kết nối" };
+      }
+    },
+    []
+  );
 
   const logout = useCallback(async () => {
-    await auth.logout();
-    setState({ user: null, permissions: [], roles: [], loading: false, sessionId: null });
-    router.push("/login");
+    try {
+      await auth.logout();
+    } catch {
+      // Continue with logout even if API fails
+    } finally {
+      clearToken();
+      setState({
+        user: null,
+        permissions: [],
+        roles: [],
+        loading: false,
+        sessionId: null,
+        token: null,
+      });
+      router.push("/login");
+    }
   }, [router]);
 
   const hasPermission = useCallback(
@@ -91,7 +197,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout, hasPermission, refreshUser }}>
+    <AuthContext.Provider
+      value={{
+        ...state,
+        login,
+        completeMfa,
+        logout,
+        hasPermission,
+        refreshUser,
+        register,
+        verifyRegisterEmail,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

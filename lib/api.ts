@@ -154,6 +154,18 @@ const MOCK_RESIDENTS: ResidentResponse[] = [
   { id: 3, fullName: "Lê Hoàng Cường", phone: "0923456789", email: "cuong@email.com", idCard: "012345678903", gender: "male", apartmentId: 2, apartmentCode: "A1202", isOwner: true, moveInDate: "2024-03-01", createdAt: "2024-02-15" },
 ];
 
+// ─── Token helpers ────────────────────────────────────────────────────────────
+export const setToken = (token: string) => {
+  if (typeof window !== "undefined") localStorage.setItem("token", token);
+};
+export const getToken = (): string | null => {
+  if (typeof window !== "undefined") return localStorage.getItem("token");
+  return null;
+};
+export const clearToken = () => {
+  if (typeof window !== "undefined") localStorage.removeItem("token");
+};
+
 // ─── Core fetch với fallback mock ─────────────────────────────────────────────
 let _offlineMode = false;
 
@@ -168,10 +180,22 @@ async function apiFetch<T>(
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = setTimeout(() => controller.abort(), 10000);
+    
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(options.headers as Record<string, string>),
+    };
+
+    // Add token if available
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     const res = await fetch(`${BASE_URL}${path}`, {
       ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers as object) },
+      headers,
       credentials: "include",
       signal: controller.signal,
     });
@@ -237,6 +261,43 @@ export const auth = {
 
   forgotCommit: (ticket: string, newPassword: string) =>
     apiFetch<boolean>("/account/password/forgot/commit", { method: "POST", body: JSON.stringify({ ticket, newPassword }) }, true),
+
+  registerStart: (email: string) =>
+    apiFetch<boolean>("/register/email/start", { method: "POST", body: JSON.stringify({ email }) }, true),
+
+  registerVerify: (email: string, code: string) =>
+    apiFetch<string>("/register/email/verify", { method: "POST", body: JSON.stringify({ email, code }) }, "mock_register_ticket_abc123"),
+
+  register: (data: { userName: string; email: string; password: string; firstName: string; lastName: string; gender?: string }) =>
+    apiFetch<{ userID: number; userName: string; email: string; isEmailVerified: boolean }>(
+      "/register",
+      { method: "POST", body: JSON.stringify(data) },
+      { userID: Math.floor(Math.random() * 9000) + 100, userName: data.userName, email: data.email, isEmailVerified: false }
+    ),
+
+  verifyRegisterEmail: (userID: number, token: string) =>
+    apiFetch<boolean>("/register/verifyRegisterEmail", { method: "POST", body: JSON.stringify({ userID, token }) }),
+
+  registerCommit: (body: { email: string; password: string; fullName: string; phone: string; idCard?: string; scope?: string }) =>
+    apiFetch<LoginResponse>("/register/commit", { method: "POST", body: JSON.stringify(body) }, {
+      userID: Math.floor(Math.random() * 9000) + 100,
+      userName: body.email.split("@")[0],
+      email: body.email,
+      isEmailVerified: true,
+      token: "mock_token",
+      refreshToken: "mock_refresh",
+      tokenExpiration: new Date(Date.now() + 1800000).toISOString(),
+      refreshTokenExpiration: new Date(Date.now() + 604800000).toISOString(),
+      sessionId: Math.floor(Math.random() * 100) + 1,
+      deviceId: "mock_device",
+      permissions: body.scope === "staff" ? ["user.read_details", "audit_log.manage"] : [],
+      roles: body.scope === "staff" ? [{ roleID: 2, roleName: "content_manager" }] : [{ roleID: 10, roleName: "customer" }],
+    } as LoginResponse),
+};
+
+// ─── Account ─────────────────────────────────────────────────────────────────
+export const account = {
+  getMe: () => apiFetch<GetUserResponse>("/user/me", {}, MOCK_ME),
 };
 
 // ─── Users ───────────────────────────────────────────────────────────────────

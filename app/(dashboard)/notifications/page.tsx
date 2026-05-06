@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { notifications, type NotificationResponse } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 const CHANNELS = [
   { key: "push",  label: "Push App",   icon: Smartphone, color: "rose" },
@@ -47,6 +48,7 @@ function channelBadge(ch: string) {
 }
 
 export default function NotificationsPage() {
+  const { user } = useAuth();
   const [history, setHistory] = useState<NotificationResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -102,7 +104,7 @@ export default function NotificationsPage() {
         content: content.trim(),
         channel,
         audience,
-        createdByAuthUserId: 1, // TODO: lấy từ AuthContext
+        createdByAuthUserId: user?.userID ?? 0,
       });
       if (res.errorCode === 200) {
         setSuccess("Tạo thông báo thành công! Đang gửi...");
